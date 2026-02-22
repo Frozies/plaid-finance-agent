@@ -1,0 +1,83 @@
+services:
+  plaid-finance:
+    build: .
+    container_name: plaid-finance
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Automated daily backup sidecar — checkpoints SQLite WAL then copies DB
+  plaid-backup:
+    image: alpine:3.20
+    container_name: plaid-backup
+    restart: unless-stopped
+    volumes:
+      - ./data:/data:ro
+      - ./backups:/backups
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache sqlite >/dev/null 2>&1
+        echo "Backup sidecar started. Running daily at 2:00 AM."
+        while true; do
+          # Calculate seconds until next 2:00 AM
+          NOW=$$(date +%s)
+          TARGET=$$(date -d "tomorrow 02:00" +%s 2>/dev/null || date -d "02:00" +%s)
+          if [ "$$TARGET" -le "$$NOW" ]; then
+            TARGET=$$(( $$TARGET + 86400 ))
+          fi
+          WAIT=$$(( $$TARGET - $$NOW ))
+          sleep "$$WAIT"
+
+          # Checkpoint WAL to ensure all data is flushed to main DB file
+          echo "[backup] $$(date '+%Y-%m-%d %H:%M:%S') Checkpointing WAL..."
+          sqlite3 /data/finance.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null
+
+          # Create timestamped backup using SQLite's online backup API
+          STAMP=$$(date '+%Y%m%d_%H%M%S')
+          echo "[backup] $$(date '+%Y-%m-%d %H:%M:%S') Creating backup: finance-$$STAMP.db"
+          sqlite3 /data/finance.db ".backup /backups/finance-$$STAMP.db"
+          RESULT=$$?
+
+          if [ "$$RESULT" -eq 0 ]; then
+            # Verify backup integrity
+            INTEGRITY=$$(sqlite3 "/backups/finance-$$STAMP.db" "PRAGMA integrity_check;" 2>/dev/null)
+            if [ "$$INTEGRITY" = "ok" ]; then
+              echo "[backup] $$(date '+%Y-%m-%d %H:%M:%S') Backup verified: finance-$$STAMP.db ($$(du -h /backups/finance-$$STAMP.db | cut -f1))"
+            else
+              echo "[backup] $$(date '+%Y-%m-%d %H:%M:%S') WARNING: Backup integrity check failed!"
+            fi
+          else
+            echo "[backup] $$(date '+%Y-%m-%d %H:%M:%S') ERROR: Backup failed with exit code $$RESULT"
+          fi
+
+          # Rotate: keep last 14 daily backups
+          ls -1t /backups/finance-*.db 2>/dev/null | tail -n +15 | while read -r old; do
+            echo "[backup] Removing old backup: $$(basename $$old)"
+            rm -f "$$old"
+          done
+
+          echo "[backup] $$(date '+%Y-%m-%d %H:%M:%S') Next backup in ~24h"
+        done
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "2m"
+        max-file: "2"

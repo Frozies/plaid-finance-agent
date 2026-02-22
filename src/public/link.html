@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Link Bank Account — Finance Agent</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      text-align: center;
+      max-width: 400px;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    p { color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.95rem; }
+    .status {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+    .status.loading { background: #1e293b; }
+    .status.success { background: #064e3b; color: #6ee7b7; }
+    .status.error { background: #7f1d1d; color: #fca5a5; }
+    .accounts {
+      text-align: left;
+      margin-top: 1rem;
+    }
+    .account {
+      background: #1e293b;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .account .name { font-weight: 500; }
+    .account .balance { color: #6ee7b7; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🏦 Link Bank Account</h1>
+    <p>Connect your bank account to your Finance Agent.</p>
+    <div id="status" class="status loading">Initializing Plaid Link...</div>
+    <div id="accounts" class="accounts"></div>
+  </div>
+
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const accountsEl = document.getElementById('accounts');
+
+    // Get link token from URL params
+    const params = new URLSearchParams(window.location.search);
+    const linkToken = params.get('token');
+
+    if (!linkToken) {
+      statusEl.className = 'status error';
+      statusEl.textContent = 'Error: No link token provided. Ask the agent to generate a link.';
+    } else {
+      // Initialize Plaid Link
+      const handler = Plaid.create({
+        token: linkToken,
+        onSuccess: async (publicToken, metadata) => {
+          statusEl.textContent = 'Linking account...';
+          try {
+            const res = await fetch('/api/link/exchange', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + (params.get('auth') || ''),
+              },
+              body: JSON.stringify({
+                public_token: publicToken,
+                institution: metadata.institution,
+              }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+              statusEl.className = 'status success';
+              statusEl.textContent = `✅ ${data.institution_name} linked successfully!`;
+
+              // Show accounts
+              if (data.accounts && data.accounts.length > 0) {
+                for (const acct of data.accounts) {
+                  const div = document.createElement('div');
+                  div.className = 'account';
+                  div.innerHTML = `
+                    <span class="name">${acct.name} (${acct.type})</span>
+                    <span class="balance">${acct.balance != null ? '$' + acct.balance.toFixed(2) : '—'}</span>
+                  `;
+                  accountsEl.appendChild(div);
+                }
+              }
+
+              statusEl.textContent += ' You can close this window.';
+            } else {
+              statusEl.className = 'status error';
+              statusEl.textContent = 'Error: ' + (data.error || 'Unknown error');
+            }
+          } catch (err) {
+            statusEl.className = 'status error';
+            statusEl.textContent = 'Error: ' + err.message;
+          }
+        },
+        onExit: (err) => {
+          if (err) {
+            statusEl.className = 'status error';
+            statusEl.textContent = 'Link exited: ' + (err.display_message || err.error_message || 'Unknown');
+          } else {
+            statusEl.className = 'status loading';
+            statusEl.textContent = 'Link closed. Refresh to try again.';
+          }
+        },
+        onLoad: () => {
+          statusEl.textContent = 'Opening Plaid Link...';
+        },
+      });
+
+      // Auto-open
+      handler.open();
+    }
+  </script>
+</body>
+</html>
