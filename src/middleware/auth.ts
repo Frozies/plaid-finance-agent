@@ -3,7 +3,7 @@ import config from '../config';
 import logger from '../services/logger';
 
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  if (req.path === '/health' || req.path.startsWith('/public/') || req.path === '/api/link/exchange') {
+  if (req.path === '/health' || req.path.startsWith('/public/') || req.path === '/link/exchange') {
     next();
     return;
   }
