@@ -78,7 +78,6 @@
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + (params.get('auth') || ''),
               },
               body: JSON.stringify({
                 public_token: publicToken,
