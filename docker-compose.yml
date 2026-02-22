@@ -9,6 +9,8 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+    networks:
+      - finance-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
       interval: 30s
@@ -20,6 +22,21 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # Plaid → Firefly III transaction sync (configure connector-config.yml first)
+  plaid-firefly-sync:
+    image: dvankley/firefly-plaid-connector-2:latest
+    container_name: plaid-firefly-sync
+    restart: unless-stopped
+    profiles:
+      - firefly
+    volumes:
+      - ./connector-config.yml:/app/application.yml:ro
+    networks:
+      - finance-net
+    mem_limit: 256m
+    depends_on:
+      - plaid-finance
 
   # Automated daily backup sidecar — checkpoints SQLite WAL then copies DB
   plaid-backup:
@@ -81,3 +98,8 @@ services:
       options:
         max-size: "2m"
         max-file: "2"
+
+networks:
+  finance-net:
+    external: true
+    name: firefly-iii_finance-net
